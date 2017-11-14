@@ -1,0 +1,840 @@
+#include <stdlib.h>
+#include <stdio.h>
+#include <math.h>
+#include <GL/glu.h>
+#include <GL/glut.h>
+#include "GLMetaseq.h"	// モデルローダ
+
+//-----------------------------------------------------
+//【操作方法】
+//-----------------------------------------------------
+// コンパイル gcc -w -lglut -lGLU -o main main.c GLMetaseq.c
+// 視線移動 マウス
+// 移動 WASDキー
+// カメラ切り替え 0:通常 1:遠方
+
+
+//-----------------------------------------------------
+//【配列定義】 法線ベクトル
+//-----------------------------------------------------
+GLdouble normal[][3] = {
+  { 0.0, 0.0,-1.0 },
+  { 1.0, 0.0, 0.0 },
+  { 0.0, 0.0, 1.0 },
+  {-1.0, 0.0, 0.0 },
+  { 0.0,-1.0, 0.0 },
+  { 0.0, 1.0, 0.0 }
+};
+
+
+//-----------------------------------------------------
+//【配列定義】 光源・色
+//-----------------------------------------------------
+GLfloat light0pos[] = { 5.0, 5.0, 5.0, 1.0 };
+GLfloat white[] = { 1.0, 1.0, 1.0, 1.0 };
+GLfloat green[] = { 0.4 , 1.0 , 0.4, 1.0 };
+GLfloat brown[] = { 0.6 , 0.2 , 0.0, 1.0 };
+GLfloat orange[] = { 1.0 , 0.8 , 0.6 , 1.0 };
+GLfloat black[] = { 1.0, 1.0, 1.0, 1.0  };
+GLfloat gray[] = { 0.8, 0.8, 0.8, 1.0  };
+GLfloat pink[] = { 1.0, 0.8, 1.0, 1.0  };
+GLfloat yellow[] = { 1.0, 1.0, 0.8, 1.0  };
+
+
+
+//-----------------------------------------------------
+//【配列定義】 視点(サンプルプログラムcountry.cを参考)
+//-----------------------------------------------------
+GLdouble View_Position[3] = {1.5, 2.3, 0.0}; // 視点の位置。これより低くすると屋根が浮く!
+double View_Angle[2] = {0.0, 0.0}; // 視点の向き
+GLint Window_Size[2] = {0, 0}; // ウィンドウのサイズ(視点の移動用)
+int CamMode = 0; //0:移動モード 1:遠隔モード
+
+
+//-----------------------------------------------------
+//【型定義】 テクスチャ
+//-----------------------------------------------------
+struct{
+   char* name;
+   GLuint id;
+   GLsizei size;
+}textures[] ={
+  { "flower.raw", 0, 1024},
+  { "stone.raw", 1, 256},
+  { "stone_white.raw", 2, 256},
+  { "stone_orange.raw", 3, 256},
+};
+
+
+//-----------------------------------------------------
+//【型定義】 葉
+//-----------------------------------------------------
+#define leave_num 100
+typedef struct{
+   double speed; // 落下速度
+   double pos_x; // 現在の葉の位置
+   double pos_y; 
+   double pos_z; 
+   double count; // 葉が地面にいる時間をカウント
+   double radius; // 葉が中心から図ってどれだけの位置におちるか
+}leaves_t;
+leaves_t leaves[leave_num];
+
+
+//-----------------------------------------------------
+//【MQOモデル定義】
+//-----------------------------------------------------
+MQO_MODEL g_mqoModel1; // 木1
+MQO_MODEL g_mqoModel2; // 木2
+MQO_MODEL g_mqoModel3; // トロッコ
+
+
+//-----------------------------------------------------
+//【基本図形】 円柱
+//-----------------------------------------------------
+void myCylinder(double radius, double height, int sides,  int tex_side, GLfloat top_color[], GLfloat side_color[])
+{
+   double step = M_PI*2 / (double)sides;
+   int i,j;
+
+
+   /* 上面 */
+   glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, top_color);
+   glNormal3d(0.0, 1.0, 0.0);
+   glBegin(GL_TRIANGLE_FAN);
+   glVertex3d(0.0, height, 0.0);
+   for(i = 0; i < sides; i++) {
+      double t = step * (double)i;
+      glVertex3d(radius * sin(t), height, radius * cos(t));
+   }
+
+   /* 底面 */
+   glNormal3d(0.0, -1.0, 0.0);
+   glBegin(GL_TRIANGLE_FAN);
+   glVertex3d(0.0, 0.0, 0.0);
+   for (i = sides; --i >= 0;) {
+      double t = step * (double)i;
+      glVertex3d(radius * sin(t), 0.0, radius * cos(t));
+   }
+   glEnd();
+
+   /* 側面 */
+   glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, side_color);
+   glEnable(GL_TEXTURE_2D);
+   // glBindTexture(GL_TEXTURE_2D, textures[tex_side].id);
+
+   for (i = 0; i <= sides; i++)
+   {
+
+      double t = step * (double)i;
+      double t2 = step * (double)(i + 1);
+      double x = sin(t);
+      double z = cos(t);
+      double x2 = sin(t2);
+      double z2 = cos(t2);
+
+      glNormal3d(x, 0.0, z);
+
+      for(j = 0; j < 3; j++){
+ 	 double dif = height * j / 3;
+         glBegin(GL_QUADS);
+
+         glTexCoord2d(0.0, 0.0);
+         glVertex3d(radius * x, height - dif, radius * z);
+	 glTexCoord2d(0.0, 1.0);
+	 glVertex3d(radius * x, height * 2 / 3 - dif, radius * z);
+         glTexCoord2d(1.0, 1.0);
+         glVertex3d(radius * x2, height * 2 / 3 - dif, radius * z2);
+       	 glTexCoord2d(1.0, 0.0);
+       	 glVertex3d(radius * x2, height - dif, radius * z2);
+
+         glEnd();
+      }
+
+   }
+
+   glDisable(GL_TEXTURE_2D);
+}
+
+//-----------------------------------------------------
+//【基本図形】 円錐
+//-----------------------------------------------------
+void myCone(GLfloat color[], int tex, double radius, double height)
+{
+   int theta;
+   glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, color);
+   for (theta = 0; theta < 360; theta += 36) {
+      double rad = M_PI * (double)theta / 180;
+      double rad2 = M_PI * (double)(theta+36) / 180;
+
+      glEnable(GL_TEXTURE_2D);
+      //glBindTexture(GL_TEXTURE_2D, textures[tex].id);
+      glBegin(GL_TRIANGLES);
+
+      glTexCoord2d(0.5, 0.0);
+      glVertex3d(0, height, 0);
+      glTexCoord2d(0.0, 1.0);
+      glVertex3d(radius * cos(rad), 0, radius * sin(rad));
+      glTexCoord2d(1.0, 1.0);
+      glVertex3d(radius * cos(rad2), 0, radius * sin(rad2));
+
+      glEnd();
+      glDisable(GL_TEXTURE_2D);
+   }
+}
+
+
+//-----------------------------------------------------
+//【基本図形】 円
+//-----------------------------------------------------
+void myCircle(double radius, int sides)
+{
+   int theta;
+   for (theta = 0; theta < sides; theta++) {
+      double rad = 2 * M_PI * (double)theta / sides;
+      double rad2 = 2 * M_PI * (double)(theta + 1) / sides;
+
+      glBegin(GL_LINES);
+      glVertex3d(radius * cos(rad), 0, radius * sin(rad));
+      glVertex3d(radius * cos(rad2), 0, radius * sin(rad2));
+      glEnd();
+   }
+}
+
+
+//-----------------------------------------------------
+//【オブジェクト】 地面
+//-----------------------------------------------------
+void base(double radius, double height, int sides)
+{
+   double step = M_PI*2 / (double)sides;
+   int i,j;
+
+   glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, green);
+
+   /* 上面 */
+   glNormal3d(0.0, 1.0, 0.0);
+
+   glEnable(GL_ALPHA_TEST);
+   glEnable(GL_TEXTURE_2D);
+   glBindTexture(GL_TEXTURE_2D, 1);
+
+   glBegin(GL_QUADS);
+   glTexCoord2d(0.0, 0.0);
+   glVertex3d(-radius, height, -radius);
+   glTexCoord2d(0.0, 1.0);
+   glVertex3d(-radius, height, radius);
+   glTexCoord2d(1.0, 1.0);
+   glVertex3d(radius, height, radius);
+   glTexCoord2d(1.0, 0.0);
+   glVertex3d(radius, height, -radius);
+
+   glEnd();
+
+   /* 底面 */
+   glNormal3d(0.0, -1.0, 0.0);
+   glBegin(GL_TRIANGLE_FAN);
+   for (i = sides; --i >= 0;) {
+      double t = step * (double)i;
+      glVertex3d(radius * sin(t), 0.0, radius * cos(t));
+   }
+   glEnd();
+
+   /* 側面 */
+   glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, white);
+
+   glBindTexture(GL_TEXTURE_2D, 2);
+   for (i = 0; i <= sides; i++)
+   {
+      double t = step * (double)i;
+      double t2 = step * (double)(i + 1);
+      double x = sin(t);
+      double z = cos(t);
+      double x2 = sin(t2);
+      double z2 = cos(t2);
+
+      glNormal3d(x, 0.0, z);
+
+      // テクスチャの大きさと合わせるため、3つに分けて描画
+
+      int j;
+      for(j = 0; j < 3; j++){
+ 	 double dif = height * j / 3;
+         glBegin(GL_QUADS);
+
+         glTexCoord2d(0.0, 0.0);
+         glVertex3d(radius * x, height - dif, radius * z);
+	 glTexCoord2d(0.0, 1.0);
+	 glVertex3d(radius * x, height * 2 / 3 - dif, radius * z);
+         glTexCoord2d(1.0, 1.0);
+         glVertex3d(radius * x2, height * 2 / 3 - dif, radius * z2);
+       	 glTexCoord2d(1.0, 0.0);
+       	 glVertex3d(radius * x2, height - dif, radius * z2);
+
+         glEnd();
+      }
+
+   }
+
+   glDisable(GL_TEXTURE_2D);
+   glDisable(GL_ALPHA_TEST);
+}
+
+
+//-----------------------------------------------------
+//【オブジェクト】 家
+//-----------------------------------------------------
+
+void Building(double radius, double height, int sides, double radius_roof,
+	      double height_roof, double x_pos, double z_pos,
+              int tex, int tex_roof)
+{
+   glPushMatrix();
+   glTranslated(x_pos, 0.0, z_pos);
+
+   // 土台部分の描画
+   myCylinder(radius, height, sides, tex, brown, white);
+
+   // 屋根の描画
+   glPushMatrix();
+   glTranslated(0.0, height, 0.0);
+
+   glCullFace(GL_FRONT);
+   myCone(orange, tex_roof, radius * radius_roof, height_roof);
+   glCullFace(GL_BACK);
+
+   glPopMatrix();
+
+   glPopMatrix();
+}
+
+
+//-----------------------------------------------------
+//【オブジェクト】 物干し竿
+//-----------------------------------------------------
+void laundrypole()
+{
+   glBindTexture(GL_TEXTURE_2D, 3);
+   myCylinder(0.005, 0.4, 10, 2, gray, gray);
+
+   glPushMatrix();
+   glTranslated(0.0, 0.0, 1.5);
+   myCylinder(0.005, 0.4, 10, 2, gray, gray);
+   glPopMatrix();
+
+   glPushMatrix();
+   glTranslated(0.0, 0.35, 0.0);
+   glRotated(90.0, 1.0, 0.0, 0.0);
+   myCylinder(0.005, 1.5, 10, 2, brown, brown);
+   glPopMatrix();
+}
+
+
+//-----------------------------------------------------
+//【オブジェクト】 タオル
+//-----------------------------------------------------
+void towel(GLfloat color[]){
+
+   glDisable(GL_CULL_FACE);
+   glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, color);
+   glBegin(GL_QUADS);
+   glVertex3d(0, 0, 0);
+   glVertex3d(0, -0.3, 0);
+   glVertex3d(0, -0.3, 0.3);
+   glVertex3d(0, 0, 0.3);
+   glEnd();
+
+   glPushMatrix();
+   glTranslated(0.02, 0.0, 0.0);
+   glBegin(GL_QUADS);
+   glVertex3d(0, 0, 0);
+   glVertex3d(0, -0.3, 0);
+   glVertex3d(0, -0.3, 0.3);
+   glVertex3d(0, 0, 0.3);
+   glEnd();
+   glPopMatrix();
+
+   glEnable(GL_CULL_FACE);
+   glCullFace(GL_BACK);
+}
+
+
+//-----------------------------------------------------
+//【オブジェクト】 線路
+//-----------------------------------------------------
+void railroad(double radius, double sides)
+{
+   int i;
+   double radius2 = radius - 0.5;
+   glMaterialfv(GL_FRONT_AND_BACK, GL_AMBIENT_AND_DIFFUSE, brown);
+   glLineWidth(15.0);
+   myCircle(radius2, sides);
+   myCircle(radius, sides);
+
+   for (i = 0; i < 90; i++) {
+      double rad = 2 * M_PI * (double) i / 90;
+
+      glBegin(GL_LINES);
+      glVertex3d(( radius + 0.1 ) * cos(rad), 0, ( radius + 0.1 ) * sin(rad));
+      glVertex3d(( radius2 - 0.1 ) * cos(rad), 0, ( radius2 - 0.1 )* sin(rad));
+      glEnd();
+   }
+}
+
+
+//-----------------------------------------------------
+//【オブジェクト】 葉
+//-----------------------------------------------------
+void leave()
+{
+   glMaterialfv(GL_FRONT_AND_BACK, GL_DIFFUSE, green);
+   glBegin(GL_TRIANGLE_STRIP);
+   glVertex3d(-0.0125, 0.002, 0);
+   glVertex3d(0, 0.002, 0.025);
+   glVertex3d(0, 0.002, -0.025);
+   glVertex3d(0.0125, 0.002, 0);
+   glEnd();
+
+   glBegin(GL_QUAD_STRIP);
+   glVertex3d(-0.0125, 0.002, 0);
+   glVertex3d(-0.0125, 0, 0);
+   glVertex3d(0, 0.002, 0.025);
+   glVertex3d(0, 0, 0.025);
+   glVertex3d(0, 0.002, -0.025);
+   glVertex3d(0, 0, -0.025);
+   glVertex3d(0.0125, 0.002, 0);
+   glVertex3d(0.0125, 0, 0);
+   glEnd();
+
+   glBegin(GL_TRIANGLE_STRIP);
+   glVertex3d(-0.0125, 0, 0);
+   glVertex3d(0, 0, 0.025);
+   glVertex3d(0, 0, -0.025);
+   glVertex3d(0.0125, 0, 0);
+   glEnd();
+}
+
+
+void leave_setting(int i )
+{
+   double rad = M_PI * (double)i / 180 * leave_num;
+   double speed_y = i % 6 + 1; 
+   leaves[i].speed = speed_y / 100;
+   leaves[i].pos_x = leaves[i].radius * cos(rad);
+   leaves[i].pos_z = leaves[i].radius * sin(rad);
+   leaves[i].count = 0;
+}
+
+//-----------------------------------------------------
+// アイドル関数
+//-----------------------------------------------------
+void idle(void)
+{
+  glutPostRedisplay();
+}
+
+
+//-----------------------------------------------------
+// 描画関数
+//-----------------------------------------------------
+void display(void)
+{
+   //-----------------------------------------------------
+   // 変数定義(アニメーション用)
+   //-----------------------------------------------------
+   static int r_world = 0; // 遠隔モード用
+   static int wind = 0; // タオルを揺らす
+   static int direction = -1; // タオルの揺れる向き
+   static int r_truck = 0; // トロッコの位置を制御
+
+   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+   glLoadIdentity();
+
+
+   //-----------------------------------------------------
+   // 視点とカメラの制御
+   //-----------------------------------------------------
+
+   // カメラモードの切り替え
+   if( CamMode == 0 ){
+      glRotated(-View_Angle[1] / M_PI * 180, 1.0, 0.0, 0.0);
+      glRotated(View_Angle[0] / M_PI * 180, 0.0, 1.0, 0.0);
+      glTranslated(-View_Position[0],-View_Position[1],-View_Position[2]);
+   }else{
+      double rad = M_PI * (double)r_world / 180;
+      gluLookAt(40.0 * cos(rad), 8.3, 40.0 * sin(rad), 0.0, 0.0, 0.0, 0.0, 1.0, 0.0);
+      r_world += 2;
+      if (r_world >= 360) r_world = 0;
+   }
+   glLightfv(GL_LIGHT0,GL_POSITION,light0pos); // ライト0の設定.視点設定のあとに記述
+
+
+   //-----------------------------------------------------
+   // 地面
+   //-----------------------------------------------------
+   base(2, 2, 10);
+   glPushMatrix();
+   glTranslated(0.0, -3.0, 0.0);
+   base(4, 3, 10);
+   glTranslated(0.0, -4.0, 0.0);
+   base(6, 4, 10);
+   glRotated(180.0, 1.0, 0.0, 1.0);
+   glCullFace(GL_FRONT);
+   myCone(white, 1, 4, 3);
+   glCullFace(GL_BACK);
+   glPopMatrix();
+
+   //-----------------------------------------------------
+   // 柱
+   //-----------------------------------------------------
+   int theta;
+   int r1 = 2;
+   for (theta = 0; theta < 360; theta += 40) {
+      double rad = M_PI * (double)theta / 180;
+      Building(0.3, 2.3, 10, 1.0, 0.3, r1 * cos(rad), r1 * sin(rad), 1, 1);
+   }
+
+   glPushMatrix();
+   glTranslated(0.0, -3.0, 0.0);
+   int r2 = 4;
+   for (theta = 30; theta < 360; theta += 60) {
+      double rad = M_PI * (double)theta / 180;
+      Building(0.3, 3.3, 10, 1.0, 0.3, r2 * cos(rad), r2 * sin(rad), 1, 1);
+   }
+
+   glPopMatrix();
+
+
+   //-----------------------------------------------------
+   // 木
+   //-----------------------------------------------------
+   glPushMatrix();
+   glTranslated(0.0, 2.0, 0.0);
+   mqoCallModel(g_mqoModel1);
+
+   glPushMatrix();
+   glTranslated(5.8, -6.0, 0.0);
+   glRotated(-40.0, 0.0, 0.0, 1.0);
+   mqoCallModel(g_mqoModel2);
+
+   glPopMatrix();
+   glPushMatrix();
+   glTranslated(2.8, -6.0, 3.8);
+   glRotated(90.0, 1.0, 1.0, 0.0);
+   mqoCallModel(g_mqoModel2);
+
+   glPopMatrix();
+   glPushMatrix();
+   glTranslated(-3.8, -5.0, -3.8);
+   glRotated(90.0, 0.3, 1.0, 1.0);
+   mqoCallModel(g_mqoModel2);
+
+   glPopMatrix();
+
+
+   //-----------------------------------------------------
+   // 葉
+   //-----------------------------------------------------
+   int i;
+  
+   for (i = 0; i < leave_num; i++) {
+      // 葉が木にある場合(開始地点)
+      if(leaves[i].pos_y == 2.0){ 
+	 leave_setting( i );
+      }
+      // 葉が地面にある場合(一定時間経過で消滅)
+      else if(leaves[i].pos_y == 0){
+         if(leaves[i].count <= 5) leaves[i].count += leaves[i].speed ;
+         else if(leaves[i].count > 5) leaves[i].pos_y = 2.0;
+      }
+      // 葉が次の移動で地面に衝突/地面より下になる場合
+      else if(( leaves[i].pos_y - leaves[i].speed ) <= 0.0)
+	 leaves[i].pos_y = 0.0;
+
+      // 葉ごとに異なる速度で落下
+      double random1 = rand() % 90 + 1;
+      double random2 = rand() % 90 + 1;
+      if(leaves[i].pos_y != 0) leaves[i].pos_y -= leaves[i].speed;
+      glPushMatrix();
+      glTranslated(leaves[i].pos_x, leaves[i].pos_y, leaves[i].pos_z);
+      // 地面の葉は回転なし
+      if(leaves[i].pos_y != 0.0){
+         glRotated(random1, 0.0, 1.0, 0.0);
+         glRotated(random2, 0.0, 0.0, 1.0);
+      }
+      leave();
+      glPopMatrix();
+   }
+  
+
+
+
+   //-----------------------------------------------------
+   // 家 
+   //glBindTexture呼び出し回数を減らすため、Building関数を使わず直接記述している
+   //-----------------------------------------------------
+   int r3 = 1.5;
+   glBindTexture(GL_TEXTURE_2D, 3);
+   for (theta = -60; theta < 180; theta += 60) {
+      double rad = M_PI * (double)theta / 180;
+      
+      glPushMatrix();
+      glTranslated(r3 * cos( rad ), 0.0,  r3 * sin( rad ));
+
+      // 土台部分の描画
+      myCylinder(0.2, 0.3, 10, 2, brown, white);
+      glPopMatrix();
+   }
+
+   glBindTexture(GL_TEXTURE_2D, 4);
+   for (theta = -60; theta < 180; theta += 60) {
+      double rad = M_PI * (double)theta / 180;
+      
+      glPushMatrix();
+      glTranslated(r3 * cos( rad ), 0.0,  r3 * sin( rad ));
+
+      // 屋根の描画
+      glTranslated(0.0, 0.3, 0.0);
+
+      glCullFace(GL_FRONT);
+      myCone(orange, 3, 0.3, 0.3);
+      glCullFace(GL_BACK);
+
+      glPopMatrix();
+
+      //Building(0.2, 0.3, 10, 1.5, 0.3, r3 * cos( rad ), r3 * sin( rad ), 2, 3);
+   }
+
+
+   //-----------------------------------------------------
+   // 物干し竿・タオル
+   //-----------------------------------------------------
+   glPushMatrix();
+   glTranslated(-0.5, 0.0, -1.5);
+   laundrypole();
+
+   glTranslated(-0.01, 0.36, 0.1);
+   glRotated((double)wind, 0.0, 0.0, 1.0);
+   towel(white);
+
+   glTranslated(0.0, 0.0, 0.5);
+   towel(pink);
+
+   glTranslated(0.0, 0.0, 0.5);
+   towel(yellow);
+   glPopMatrix();
+
+   // タオルのアニメーション
+   wind += direction;
+   if (wind >= 10) direction = -1;
+   if (wind <= -10) direction = 1;
+
+
+   //-----------------------------------------------------
+   // 線路
+   //-----------------------------------------------------
+   glPushMatrix();
+   glTranslated(0.0, -2.0, 0.0);
+   railroad(3.5, 180);
+
+
+   //-----------------------------------------------------
+   // トロッコ
+   //-----------------------------------------------------
+   double rad = M_PI * (double)r_truck / 180;
+   glTranslated( 3.0 * cos(rad), 0.0, 3.0 * sin(rad) );
+   glRotated(-(double)r_truck, 0.0, 1.0, 0.0);
+   glRotated(90.0, 0.0, 1.0, 0.0);
+   mqoCallModel(g_mqoModel3);
+   glPopMatrix();
+   // トロッコのアニメーション
+   if(++r_truck > 360) r_truck = 0;
+
+   glPopMatrix();
+
+   // 画面の更新
+   glutSwapBuffers();
+
+}
+
+
+//-----------------------------------------------------
+// 座標軸定義
+//-----------------------------------------------------
+void resize(int w, int h)
+{
+  glViewport(0, 0, w, h);
+  Window_Size[0] = w;
+  Window_Size[1] = h;
+  glMatrixMode(GL_PROJECTION);
+  glLoadIdentity();
+  gluPerspective(30.0, (double)w / (double)h, 0.1, 500.0);
+  glMatrixMode(GL_MODELVIEW);
+}
+
+
+//-----------------------------------------------------
+// キーボード定義
+//-----------------------------------------------------
+void keyboard(unsigned char key, int x, int y)
+{
+   const double vel = 0.1;
+   switch (key) {
+     if((CamMode == 0) && ( pow( View_Position[0],2 ) + pow( View_Position[2],2 ) <= 4 )){
+         case 'w':
+            View_Position[0] += vel * cos(View_Angle[0] - M_PI / 2.0);
+            View_Position[2] += vel * sin(View_Angle[0] - M_PI / 2.0);
+         break;
+         case 's':
+            View_Position[0] += vel * cos(View_Angle[0] + M_PI / 2.0);
+            View_Position[2] += vel * sin(View_Angle[0] + M_PI / 2.0);
+         break;
+         case 'a':
+            View_Position[0] += vel * cos(View_Angle[0] + M_PI);
+            View_Position[2] += vel * sin(View_Angle[0] + M_PI);
+         break;
+         case 'd':
+            View_Position[0] += vel * cos(View_Angle[0]);
+            View_Position[2] += vel * sin(View_Angle[0]);
+         break;
+      }
+         case '0':
+            CamMode = 0;
+         break;
+         case '1':
+            CamMode = 1;
+         break;
+         default:
+            break;
+   }
+   glutPostRedisplay();
+}
+
+
+//-----------------------------------------------------
+// マウス移動定義
+//-----------------------------------------------------
+void motion(int x, int y)
+{
+    View_Angle[0] = (GLdouble)x / Window_Size[0] * M_PI * 2 - M_PI;
+    View_Angle[1] = (GLdouble)y / -Window_Size[1] * M_PI + M_PI / 2.0;
+    glutPostRedisplay();
+}
+
+
+//-----------------------------------------------------
+//テクスチャ設定
+//-----------------------------------------------------
+void Tex_setting(void)
+{
+   int i;
+   for(i = 0;i < sizeof(textures) / sizeof(*textures);++i)
+   {
+      // テクスチャの読み込みに使う配列(RGBA)
+      GLubyte texture[textures[i].size][textures[i].size][4];
+      FILE *fp;
+
+      // テクスチャ画像の読み込み
+      if ((fp = fopen(textures[i].name, "rb")) != NULL) {
+         fread(texture, sizeof texture, 1, fp);
+         fclose(fp);
+
+         glGenTextures(1, &textures[i].id); // テクスチャIDを生成
+         glBindTexture(GL_TEXTURE_2D, textures[i].id);
+
+         // テクスチャ画像はバイト単位に詰め込まれている
+         glPixelStorei(GL_UNPACK_ALIGNMENT, 4); // RGB:pram=1 RGBA:pram=4
+
+         // テクスチャの割り当て
+         glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, textures[i].size,
+                      textures[i].size, 0,
+         GL_RGBA, GL_UNSIGNED_BYTE, texture);
+
+         // テクスチャを拡大・縮小する方法の指定
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+
+         // テクスチャ環境
+         glTexEnvi(GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE);
+      }
+   }
+   glAlphaFunc(GL_GREATER, 0.5); // アルファテストの比較関数
+}
+
+
+//-----------------------------------------------------
+// 初期設定
+//-----------------------------------------------------
+void init(void)
+{
+   glClearColor(0.6, 1.0, 1.0, 1.0);
+   glEnable(GL_DEPTH_TEST);
+
+   glEnable(GL_CULL_FACE);
+   glCullFace(GL_BACK);
+
+   glEnable(GL_LIGHTING);
+   glEnable(GL_LIGHT0);
+   glLightfv(GL_LIGHT1, GL_DIFFUSE, white);
+   glLightfv(GL_LIGHT1, GL_SPECULAR, white);
+
+   Tex_setting();
+
+   // 葉の初期設定
+   int i;
+   for( i = 0; i < leave_num; i++ ){
+      int radius; // 葉の落ちる半径
+      if(i % 5 == 0) { leaves[i].pos_y = 0.0; leaves[i].radius = 0.2;}
+      if(i % 5 == 1) { leaves[i].pos_y = 0.4; leaves[i].radius = 0.3;}
+      if(i % 5 == 2) { leaves[i].pos_y = 0.8; leaves[i].radius = 0.4;}
+      if(i % 5 == 3) { leaves[i].pos_y = 1.2; leaves[i].radius = 0.5;}
+      if(i % 5 == 4) { leaves[i].pos_y = 1.6; leaves[i].radius = 0.6;}
+      leave_setting(i);
+   }
+}
+
+
+//-----------------------------------------------------
+// 終了処理関数
+//-----------------------------------------------------
+void Quit(void)
+{
+   int i;
+   for(i = 0;i < sizeof(textures) / sizeof(*textures);++i) {
+      glDeleteTextures(1 , &textures[i].id); //読み込んだテクスチャを解放
+   }
+
+    mqoDeleteModel( g_mqoModel1 );
+    mqoDeleteModel( g_mqoModel2 );
+    mqoDeleteModel( g_mqoModel3 );
+    mqoCleanup();
+}
+
+
+//-----------------------------------------------------
+// メイン関数
+//-----------------------------------------------------
+int main(int argc, char *argv[])
+{
+   glutInitWindowPosition(200, 200);
+   glutInitWindowSize(600, 600);
+
+   glutInit(&argc, argv);
+   glutInitDisplayMode(GLUT_RGBA | GLUT_DOUBLE | GLUT_DEPTH);
+   glutCreateWindow("Final Project");   // モデルを表示させる準備
+   mqoInit(); // GLMetaseqの初期化
+   g_mqoModel1 = mqoCreateModel("tree.mqo",0.5); // モデルのロード
+   g_mqoModel2 = mqoCreateModel("tree2.mqo",0.3);
+   g_mqoModel3 = mqoCreateModel("truck.mqo",0.005);
+   atexit(Quit);
+   glutDisplayFunc(display);
+   glutIdleFunc(idle);
+   glutReshapeFunc(resize);
+   glutPassiveMotionFunc(motion);
+   glutKeyboardFunc(keyboard);
+   init();
+   glutMainLoop();
+
+   return 0;
+}

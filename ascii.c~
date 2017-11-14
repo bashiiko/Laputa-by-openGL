@@ -1,0 +1,16 @@
+
+#include <stdio.h>
+#include <curses.h>
+
+int main(void)
+{
+char c = 0;
+while (c != 'Z') {
+if (kbhit()) {
+c = getch();
+printf("Key:0x%02X\n", c & 0xff);
+}
+}
+
+return 0;
+}
